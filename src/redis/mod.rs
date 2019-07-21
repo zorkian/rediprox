@@ -2,7 +2,7 @@ pub mod decoder;
 pub mod encoder;
 
 // All possible returnable Redis value types.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RedisValue {
     Integer(i64),
     String(String),
