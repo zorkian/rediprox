@@ -2,7 +2,9 @@ use crate::redis::RedisValue;
 use std::fmt;
 use std::io::{Bytes, Read};
 
-struct DecodeError;
+struct DecodeError {
+    permanent: bool,
+}
 
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -32,7 +34,9 @@ impl<T: Read> Decoder<T> {
     // we receive invalid data, DecodeError is returned.
     fn decode_one(&mut self) -> Result<RedisValue, DecodeError> {
         match self.bytes.next() {
-            36 => self.decode_bulkstring(),
+            Some(val) => match val {
+                36 => self.decode_bulkstring(),
+            },
             _ => Err(DecodeError),
         }
     }
@@ -41,20 +45,33 @@ impl<T: Read> Decoder<T> {
     fn read_line(&mut self) -> Result<Vec<u8>, DecodeError> {
         let mut result: Vec<u8> = Vec::new();
         loop {
-            match self.bytes.next()? {
+            match self.bytes.next() {
+                -1 => Err(DecodeError { permanent: false }),
                 13 => {
-                    if self.bytes.next()? == 10 {
+                    if self.bytes.next().unwrap().unwrap() == 10 {
                         return Ok(result);
                     } else {
-                        return Err(DecodeError);
+                        return Err(DecodeError { permanent: false });
                     }
                 }
             }
         }
     }
 
+    // Read a single byte and handle the different states of IO
+    // the iterator can be in.
+    fn read_byte(&mut self) -> Result<u8, DecodeError> {
+        match self.bytes.next() {
+            Some(val) => match val {
+                Ok(val) => val,
+                error => Err(DecodeError { permanent: false }),
+            },
+            None => Err(DecodeError { permanent: true }), // EOF
+        }
+    }
+
     fn decode_bulkstring(&mut self) -> Result<RedisValue, DecodeError> {
-        Err(DecodeError)
+        Err(DecodeError { permanent: false })
     }
 }
 
