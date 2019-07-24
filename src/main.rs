@@ -7,12 +7,16 @@ pub mod redis;
 use redis::decoder::Decoder;
 use redis::encoder::encode_one;
 
-fn handle_client(client_stream: UnixStream) {
+fn handle_client(mut client_stream: UnixStream) {
     println!("User connected.");
-    let mut client_decoder = Decoder::new(BufReader::new(client_stream));
+    let mut client_decoder = Decoder::new(BufReader::new(
+        client_stream.try_clone().expect("Clone failed!"),
+    ));
 
-    let mut redis_stream = TcpStream::connect("127.0.0.1:6379").unwrap();
-    let mut redis_decoder = Decoder::new(BufReader::new(&redis_stream));
+    let mut redis_stream = TcpStream::connect("127.0.0.1:6379").expect("Connection failed!");
+    let mut redis_decoder = Decoder::new(BufReader::new(
+        redis_stream.try_clone().expect("Clone failed!"),
+    ));
 
     loop {
         match client_decoder.decode_one() {
@@ -20,7 +24,12 @@ fn handle_client(client_stream: UnixStream) {
                 println!("(from client) {:?}", value);
                 redis_stream.write(&encode_one(value)).unwrap();
                 match redis_decoder.decode_one() {
-                    Ok(value) => {}
+                    Ok(value) => {
+                        println!("(from server) {:?}", value);
+                        client_stream
+                            .write(&encode_one(value))
+                            .expect("Failed to write to client!");
+                    }
                     Err(err) => {
                         println!("Error from Redis: {}", err);
                         return;
