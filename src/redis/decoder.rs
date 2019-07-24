@@ -4,7 +4,7 @@ use std::fmt;
 use std::io::{Bytes, ErrorKind, Read};
 use std::str;
 
-struct DecodeError;
+pub struct DecodeError;
 
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -18,12 +18,12 @@ impl fmt::Debug for DecodeError {
     }
 }
 
-struct Decoder<T> {
+pub struct Decoder<T> {
     bytes: Bytes<T>,
 }
 
 impl<T: Read> Decoder<T> {
-    fn new(reader: T) -> Decoder<T> {
+    pub fn new(reader: T) -> Decoder<T> {
         Decoder {
             bytes: reader.bytes(),
         }
@@ -32,7 +32,7 @@ impl<T: Read> Decoder<T> {
     // Decode a single value off of the front of the stream, this will
     // block until a full value is available. If the stream errors or
     // we receive invalid data, DecodeError is returned.
-    fn decode_one(&mut self) -> Result<RedisValue, DecodeError> {
+    pub fn decode_one(&mut self) -> Result<RedisValue, DecodeError> {
         match self.read_byte()? {
             36 => self.decode_bulkstring(),
             42 => self.decode_array(),
