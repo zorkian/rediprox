@@ -151,7 +151,7 @@ impl<T: Read> Decoder<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::redis::encoder::encode;
+    use crate::redis::encoder::encode_one;
 
     #[test]
     fn test_decoder() {
@@ -176,7 +176,7 @@ mod tests {
         ];
 
         for test in decode_tests {
-            let vec = encode(test.clone());
+            let vec = encode_one(test.clone());
             let mut decoder = Decoder::new(&vec[..]);
             assert_eq!(decoder.decode_one().unwrap(), test)
         }

@@ -1,69 +1,89 @@
-use std::fs;
-use std::io::{BufReader, Write};
-use std::net::TcpStream;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::time::{Duration, Instant};
+
+extern crate clap;
+extern crate etherparse;
+extern crate pcap;
+
+use clap::{App, Arg};
+use etherparse::SlicedPacket;
+use pcap::{Capture, Device};
+
+pub mod stats;
+use stats::Stats;
 
 pub mod redis;
-use redis::decoder::Decoder;
-use redis::encoder::encode_one;
 
-fn handle_client(mut client_stream: UnixStream) {
-    println!("User connected.");
-    let mut client_decoder = Decoder::new(BufReader::new(
-        client_stream.try_clone().expect("Clone failed!"),
-    ));
+fn main() {
+    let config = App::new("redis-top")
+        .version("0.1")
+        .author("Mark Smith <mark@qq.is>")
+        .about("Debug realtime traffic to a Redis server")
+        .arg(
+            Arg::with_name("interface")
+                .short("i")
+                .long("interface")
+                .default_value("eth0")
+                .value_name("DEVICE")
+                .help("Which network device to capture on")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("snaplen")
+                .short("s")
+                .long("snaplen")
+                .default_value("512")
+                .value_name("BYTES")
+                .help("How many bytes to read from outgoing packets")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("bpf")
+                .long("bpf")
+                .default_value("dst port 6379")
+                .value_name("BPF_STRING")
+                .help("BPF to select the right packets")
+                .takes_value(true),
+        )
+        .get_matches();
 
-    let mut redis_stream = TcpStream::connect("127.0.0.1:6379").expect("Connection failed!");
-    let mut redis_decoder = Decoder::new(BufReader::new(
-        redis_stream.try_clone().expect("Clone failed!"),
-    ));
-
-    loop {
-        match client_decoder.decode_one() {
-            Ok(value) => {
-                println!("(from client) {:?}", value);
-                redis_stream.write(&encode_one(value)).unwrap();
-                match redis_decoder.decode_one() {
-                    Ok(value) => {
-                        println!("(from server) {:?}", value);
-                        client_stream
-                            .write(&encode_one(value))
-                            .expect("Failed to write to client!");
-                    }
-                    Err(err) => {
-                        println!("Error from Redis: {}", err);
-                        return;
-                    }
-                }
-            }
-            Err(err) => {
-                println!("Failed to read result: {}", err);
-                return;
-            }
-        };
-    }
-}
-
-fn setup_listener() -> Result<UnixListener, std::io::Error> {
-    // If file doesn't exist, don't care
-    let _ = fs::remove_file("/tmp/rediprox.socket");
-    return UnixListener::bind("/tmp/rediprox.socket");
-}
-
-fn main() -> Result<(), std::io::Error> {
-    let listener = setup_listener()?;
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                handle_client(stream);
-            }
-            Err(err) => {
-                println!("Failed to read from stream: {}", err);
-                break;
-            }
+    // Find the right interface and pass it to the reader
+    let interface = config.value_of("interface").unwrap();
+    for device in Device::list().unwrap() {
+        if device.name == interface {
+            read_from_device(config, device);
+            return;
         }
     }
+    println!("Error: interface {} not found", interface);
+}
 
-    Ok(())
+fn read_from_device(config: clap::ArgMatches, device: Device) {
+    let mut cap = Capture::from_device(device)
+        .unwrap()
+        .promisc(false)
+        .snaplen(config.value_of("snaplen").unwrap().parse().unwrap())
+        .open()
+        .unwrap();
+
+    cap.filter(config.value_of("bpf").unwrap()).unwrap();
+
+    let mut stats = Stats::new();
+    let mut next_stats_at = stats
+        .started_at()
+        .checked_add(Duration::from_secs(10))
+        .unwrap();
+
+    while let Ok(packet) = cap.next() {
+        match SlicedPacket::from_ethernet(packet.data) {
+            Err(value) => println!("Error parsing packet: {:?}", value),
+            Ok(value) => stats.accumulate_packet(value),
+        }
+
+        // If we're at time, output the accumulated stats
+        if Instant::now() > next_stats_at {
+            stats.print_stats();
+
+            next_stats_at = Instant::now().checked_add(Duration::from_secs(10)).unwrap();
+        }
+    }
 }
